@@ -9,12 +9,16 @@ public sealed class Lexer
     private readonly Dfa _dfa;
     private readonly string[] _names;
     private readonly bool[] _skip;
+    private readonly Dfa[] _ruleDfas;
+    private readonly Dfa[] _prefixUnionDfas;
 
-    internal Lexer(Dfa dfa, string[] names, bool[] skip)
+    internal Lexer(Dfa dfa, Dfa[] ruleDfas, Dfa[] prefixUnionDfas, string[] names, bool[] skip)
     {
         _dfa = dfa;
         _names = names;
         _skip = skip;
+        _ruleDfas = ruleDfas;
+        _prefixUnionDfas = prefixUnionDfas;
     }
 
     /// <summary>Tokenizes the entire text. Empty text yields an empty result.</summary>
@@ -65,6 +69,15 @@ public sealed class Lexer
         }
         return tokens;
     }
+
+    /// <summary>
+    /// Audits the compiled rule set: reports every pair of rules whose
+    /// languages intersect (with a shortest witness accepted by both), and
+    /// decides per rule whether it can ever win against its preceding rules
+    /// or is completely shadowed by their union. The result is computed
+    /// from the compiled automata and never mutates scanner state.
+    /// </summary>
+    public RuleAuditReport Audit() => RuleAuditor.Audit(_names, _skip, _ruleDfas, _prefixUnionDfas, _dfa);
 }
 
 /// <summary>Compiles prioritized rules into a reusable <see cref="Lexer"/>.</summary>
@@ -79,9 +92,10 @@ public static class LexerCompiler
         // Snapshot so later caller mutations cannot affect the compiled lexer.
         var snapshot = rules.ToArray();
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        var nfa = new Nfa();
+        var fullNfa = new Nfa();
         var names = new string[snapshot.Length];
         var skip = new bool[snapshot.Length];
+        var asts = new Node[snapshot.Length];
 
         for (int i = 0; i < snapshot.Length; i++)
         {
@@ -96,12 +110,33 @@ public static class LexerCompiler
             Node ast = PatternParser.Parse(rule.Pattern, rule.Name);
             if (Node.IsNullable(ast))
                 throw new LexerCompileException($"Rule '{rule.Name}' can match the empty string.", rule.Name);
-            nfa.AddRule(ast, i);
+            asts[i] = ast;
+            fullNfa.AddRule(ast, i);
             names[i] = rule.Name;
             skip[i] = rule.Skip;
         }
 
-        Dfa dfa = Dfa.Build(nfa);
-        return new Lexer(dfa, names, skip);
+        Dfa dfa = Dfa.Build(fullNfa);
+
+        // Per-rule automata keep exact per-language information for the audit.
+        var ruleDfas = new Dfa[snapshot.Length];
+        for (int i = 0; i < snapshot.Length; i++)
+        {
+            var nfa = new Nfa();
+            nfa.AddRule(asts[i], 0);
+            ruleDfas[i] = Dfa.Build(nfa);
+        }
+
+        // prefixUnionDfas[i] accepts the union of rules 0..i-1 (empty for i == 0).
+        // The audit uses per-state strict-extension reachability of these DFAs.
+        var prefixUnionDfas = new Dfa[snapshot.Length];
+        var prefixNfa = new Nfa();
+        for (int i = 0; i < snapshot.Length; i++)
+        {
+            prefixUnionDfas[i] = i == 0 ? Dfa.LiveNonAccepting() : Dfa.Build(prefixNfa);
+            prefixNfa.AddRule(asts[i], i);
+        }
+
+        return new Lexer(dfa, ruleDfas, prefixUnionDfas, names, skip);
     }
 }

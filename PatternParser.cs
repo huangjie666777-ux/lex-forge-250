@@ -63,7 +63,10 @@ internal sealed class PatternParser
         while (Peek == '*' || Peek == '+' || Peek == '?')
         {
             char op = _pattern[_pos];
-            if (Node.IsNullable(atom))
+            // Only '+' changes the language of a nullable expression: 'a?'+
+            // can match the empty string, same as 'a?'. '*' and '?' on a
+            // nullable sub-expression are harmless (e.g. '(a?)*b').
+            if (op == '+' && Node.IsNullable(atom))
                 throw Error($"Repetition '{op}' applied to an expression that can match empty", _pos);
             _pos++;
             atom = op switch
