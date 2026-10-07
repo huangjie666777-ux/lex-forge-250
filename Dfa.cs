@@ -8,11 +8,13 @@ internal sealed class Dfa
 
     public readonly int[][] Transitions; // [state][char] -> state, -1 = dead
     public readonly int[] AcceptRule;    // best (lowest-index) rule per state, -1 = none
+    public readonly int[][] AcceptSets;  // sorted rule indices accepted by each state
 
-    private Dfa(int[][] transitions, int[] acceptRule)
+    private Dfa(int[][] transitions, int[] acceptRule, int[][] acceptSets)
     {
         Transitions = transitions;
         AcceptRule = acceptRule;
+        AcceptSets = acceptSets;
     }
 
     public static Dfa Build(Nfa nfa)
@@ -22,6 +24,7 @@ internal sealed class Dfa
         var ids = new Dictionary<HashSet<Nfa.State>, int>(HashSet<Nfa.State>.CreateSetComparer());
         var transitions = new List<int[]>();
         var accept = new List<int>();
+        var acceptSets = new List<int[]>();
 
         int AddState(HashSet<Nfa.State> set)
         {
@@ -35,10 +38,16 @@ internal sealed class Dfa
             transitions.Add(new int[Alphabet]);
             Array.Fill(transitions[id], -1);
             int best = -1;
+            var accepted = new SortedSet<int>();
             foreach (Nfa.State s in set)
-                if (s.AcceptRule >= 0 && (best < 0 || s.AcceptRule < best))
-                    best = s.AcceptRule;
+                if (s.AcceptRule >= 0)
+                {
+                    accepted.Add(s.AcceptRule);
+                    if (best < 0 || s.AcceptRule < best)
+                        best = s.AcceptRule;
+                }
             accept.Add(best);
+            acceptSets.Add(accepted.ToArray());
             return id;
         }
 
@@ -62,7 +71,7 @@ internal sealed class Dfa
             foreach (var (c, targets) in moves)
                 transitions[i][c] = AddState(EpsilonClosure(targets, closureCache));
         }
-        return new Dfa(transitions.ToArray(), accept.ToArray());
+        return new Dfa(transitions.ToArray(), accept.ToArray(), acceptSets.ToArray());
     }
 
     private static HashSet<Nfa.State> EpsilonClosure(IEnumerable<Nfa.State> seeds,

@@ -63,8 +63,6 @@ internal sealed class PatternParser
         while (Peek == '*' || Peek == '+' || Peek == '?')
         {
             char op = _pattern[_pos];
-            if (Node.IsNullable(atom))
-                throw Error($"Repetition '{op}' applied to an expression that can match empty", _pos);
             _pos++;
             atom = op switch
             {

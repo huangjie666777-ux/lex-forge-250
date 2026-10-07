@@ -21,6 +21,26 @@ IReadOnlyList<LexToken> tokens = lexer.Scan("if x1\n  42");
 - `LexerCompileException` - carries `RuleName` and `PatternOffset` for syntax errors.
 - `LexerScanException` - carries `Offset`, `Line`, `Column` of the first unrecognized position; scanning stops (no character skipping).
 
+## Rule audit
+
+`Lexer.Audit()` reuses the compiled DFA to report how the rules compete. It is a pure computation: call it any number of times, interleave it with scans, and nothing is mutated.
+
+```csharp
+RuleAuditReport report = lexer.Audit();
+
+foreach (RuleOverlap overlap in report.Overlaps)
+    Console.WriteLine($"{overlap.FirstRule} <-> {overlap.SecondRule}: \"{overlap.Witness}\"");
+
+foreach (RuleAuditEntry entry in report.Entries)
+    // entry.CanWin ? entry.WinningWitness : entry.ShortestAccepted / entry.WinningRule
+    ;
+```
+
+- `Overlaps` - every unordered pair of rules whose languages share a complete non-empty word, each pair reported once, in declaration order (`(0,1)`, `(0,2)`, ..., `(1,2)`, ...). `Witness` is a word both rules accept in full; sharing only a prefix is not an intersection. The witness is the shortest such word, and the ASCII-lexicographically smallest among equal lengths.
+- `Entries[i].CanWin` - whether rule `i` can ever win from the scan start, considering the union of all earlier rules (including skipped rules). When true, `WinningWitness` is the shortest input (ASCII-lex-min tie break) for which this rule is the actual longest-match/order winner.
+- When `CanWin` is false the rule is **fully shadowed**: `ShortestAccepted` is its shortest accepted word and `WinningRule` names the earlier rule that actually wins on that word. Shadowing is decided against the union of all predecessors - e.g. `x1`, `y2` together fully shadow `x1|y2` even though neither predecessor alone covers it.
+- All answers come from exact automaton reachability: a breadth-first search over the compiled DFA with edges taken in ASCII order (the first path reaching a state is its shortest, lex-smallest word). No `Regex`, random sampling, or bounded word-length enumeration is involved.
+
 ## Pattern syntax
 
 - ASCII literals and escapes: `\n`, `\r`, `\t`, and escaped metacharacters (`\\ . * + ? ( ) [ ] | ^ $ { } -`).
@@ -28,7 +48,7 @@ IReadOnlyList<LexToken> tokens = lexer.Scan("if x1\n  42");
 - Grouping `(...)`, concatenation, alternation `|`, repetition `*` `+` `?`.
 - Precedence (high to low): repetition, concatenation, alternation.
 - Not supported (compile-time error with rule name and pattern offset): wildcard `.`, negated classes `[^...]`, anchors `^` `$`, counted repetition `{m,n}`, backreferences.
-- Rules that can match the empty string are rejected.
+- Repetition operators may be applied to subexpressions that themselves can match empty text: patterns such as `(a?)*b` compile (the mandatory `b` keeps the overall language non-empty). Only the rule pattern as a whole must reject the empty string; patterns such as `(a?)*` or `(a|b)?` are still rejected.
 
 ## Matching semantics
 
@@ -47,8 +67,9 @@ IReadOnlyList<LexToken> tokens = lexer.Scan("if x1\n  42");
 - `Abstractions.cs` - public types (`LexRule`, `LexToken`, exceptions).
 - `PatternParser.cs` / `Ast.cs` - pattern syntax tree and validation.
 - `Nfa.cs` - Thompson construction.
-- `Dfa.cs` - subset construction with epsilon closure and accept priorities.
-- `Lexer.cs` - `LexerCompiler` and the scanning loop.
+- `Dfa.cs` - subset construction with epsilon closure, per-state accept sets and accept priorities.
+- `RuleAudit.cs` - exact DFA reachability analysis (intersections, winning witnesses, union shadowing).
+- `Lexer.cs` - `LexerCompiler`, the scanning loop, and `Lexer.Audit()`.
 - `LexForge250.Tests` - xUnit tests; `LexForge250.Demo` - runnable example.
 
 ## Build, test, demo

@@ -17,6 +17,12 @@ public sealed class Lexer
         _skip = skip;
     }
 
+    /// <summary>
+    /// Audits rule intersections and per-rule win/shadow status. Pure: repeated
+    /// calls are independent and never affect scanning or the caller's rules.
+    /// </summary>
+    public RuleAuditReport Audit() => RuleAuditor.Audit(_dfa, _names);
+
     /// <summary>Tokenizes the entire text. Empty text yields an empty result.</summary>
     public IReadOnlyList<LexToken> Scan(string text)
     {
